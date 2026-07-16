@@ -16,7 +16,9 @@ class ApiController extends Controller
     protected $apiService;
     protected $riskService;
 
-    // Inject kedua Service yang telah dibuat di Fase 3 & Fase 4[cite: 1]
+    /**
+     * Inject Service yang dibutuhkan.
+     */
     public function __construct(ApiService $apiService, RiskAnalysisService $riskService)
     {
         $this->apiService = $apiService;
@@ -24,8 +26,7 @@ class ApiController extends Controller
     }
 
     /**
-     * 1. GET /api/countries[cite: 1]
-     * Mengembalikan profil negara beserta data makroekonomi untuk dashboard global[cite: 1].
+     * 1. GET /api/countries
      */
     public function getCountries(Request $request)
     {
@@ -33,9 +34,10 @@ class ApiController extends Controller
 
         if ($countryId) {
             $country = Country::find($countryId);
-            if (!$country) return response()->json(['message' => 'Country not found'], 404);
+            if (!$country) {
+                return response()->json(['status' => 'error', 'message' => 'Country not found'], 404);
+            }
             
-            // Integrasikan data profil dari REST Countries API secara real-time[cite: 1]
             $profile = $this->apiService->getCountryProfile($country->iso_code);
             
             return response()->json([
@@ -51,78 +53,76 @@ class ApiController extends Controller
     }
 
     /**
-     * 2. GET /api/risk[cite: 1]
-     * Mengambil hasil kalkulasi Weighted Risk Score & riwayat tren risiko negara[cite: 1].
+     * 2. GET /api/risk
      */
     public function getRiskData(Request $request)
     {
         $request->validate(['country_id' => 'required|exists:countries,id']);
-        $country = Country::find($request->country_id);
+        
+        $country = Country::with('ports')->find($request->country_id);
 
-        // Ambil data dasar pelabuhan pertama negara tersebut sebagai koordinat acuan cuaca
-        $port = Port::where('country_id', $country->id)->first();
-        $lat = $port ? $port->latitude : -6.10; // Default fallback ke koordinat seeder jika tidak ada pelabuhan[cite: 2]
+        $port = $country->ports->first();
+        $lat = $port ? $port->latitude : -6.10; 
         $lng = $port ? $port->longitude : 106.89;
 
-        // 1. Ambil Data Cuaca[cite: 1]
-        $weather = $this->apiService->getWeather($lat, $lng);
-
-        // 2. Ambil Berita Dominan untuk mengambil teks analisis sentimen
-            $latestNews = NewsCache::where('country_id', $country->id)->latest()->first();
-            $sentimentLabel = $latestNews ? $latestNews->sentiment : 'Neutral';
-
-        // 3. Hitung skor risiko menggunakan Engine weighted model di Fase 4
+        // Ambil Data
+        $weather = $this->apiService->getWeather($lat, $lng) ?? ['storm_risk' => 'Low', 'precipitation' => 0];
+        $latestNews = NewsCache::where('country_id', $country->id)->latest()->first();
+        $sentimentLabel = $latestNews ? $latestNews->sentiment : 'Neutral';
+        $currencyRates = $this->apiService->getExchangeRate('USD');
+        
+        // Kalkulasi Engine
         $calculatedRisk = $this->riskService->calculateCountryRisk(
-            $country->id,
-            $weather ?? ['storm_risk' => 'Low', 'precipitation' => 0],
-            $country->inflation ?? 2.0,
-            $sentimentLabel
+            $country->id, 
+            $weather, 
+            $country->inflation ?? 2.0, 
+            $sentimentLabel,
+            $currencyRates ?? [] 
         );
 
-        // 4. Ambil 5 riwayat tren risiko terakhir untuk kebutuhan Chart.js
+        // Ekstraksi Nilai untuk Database
+        $totalRisk = is_array($calculatedRisk) ? ($calculatedRisk['total_risk'] ?? 33) : ($calculatedRisk->total_risk ?? 33);
+        $weatherRisk = is_array($calculatedRisk) ? ($calculatedRisk['weather_risk'] ?? 0) : ($calculatedRisk->weather_risk ?? 0);
+        $inflationRisk = is_array($calculatedRisk) ? ($calculatedRisk['inflation_risk'] ?? 0) : ($calculatedRisk->inflation_risk ?? 0);
+        $sentimentRisk = is_array($calculatedRisk) ? ($calculatedRisk['sentiment_risk'] ?? 0) : ($calculatedRisk->sentiment_risk ?? 0);
+        $exchangeRateRisk = is_array($calculatedRisk) ? ($calculatedRisk['exchange_rate_risk'] ?? 0) : ($calculatedRisk->exchange_rate_risk ?? 0);
+
+        RiskScore::create([
+            'country_id'          => $country->id,
+            'total_risk'          => $totalRisk,
+            'weather_risk'        => $weatherRisk,
+            'inflation_risk'      => $inflationRisk,
+            'sentiment_risk'      => $sentimentRisk,
+            'exchange_rate_risk'  => $exchangeRateRisk,
+        ]);
+
         $trends = RiskScore::where('country_id', $country->id)->latest()->take(5)->get()->reverse();
+
+        // FIX: Kirim sebagai OBJEK agar frontend bisa mengakses .total_risk
+        $currentRiskResponse = [
+            'total_risk'         => $totalRisk,
+            'weather_risk'       => $weatherRisk,
+            'inflation_risk'     => $inflationRisk,
+            'sentiment_risk'     => $sentimentRisk,
+            'exchange_rate_risk' => $exchangeRateRisk,
+        ];
 
         return response()->json([
             'status' => 'success',
-            'current_risk' => $calculatedRisk,
+            'current_risk' => $currentRiskResponse,
             'weather_info' => $weather,
             'trends' => $trends
         ]);
     }
 
     /**
-     * 3. GET /api/ports[cite: 1]
-     * Menyediakan data koordinat pelabuhan untuk peta interaktif Leaflet.js[cite: 1].
-     */
-    public function getPortData(Request $request)
-    {
-        $query = Port::with('country');
-
-        // Fitur Cari Pelabuhan atau Cari Negara sesuai PDF[cite: 1]
-        if ($request->has('search')) {
-            $search = $request->query('search');
-            $query->where('name', 'LIKE', "%{$search}%")
-                  ->orWhereHas('country', function($q) use ($search) {
-                      $q->where('name', 'LIKE', "%{$search}%");
-                  });
-        }
-
-        return response()->json([
-            'status' => 'success',
-            'data' => $query->get()
-        ]);
-    }
-
-    /**
-     * 4. GET /api/news[cite: 1]
-     * Mengambil berita logistik dari API luar, menganalisis sentimen, dan menyimpannya ke Cache[cite: 1].
+     * 3. GET /api/news
      */
     public function getNewsData(Request $request)
     {
         $request->validate(['country_id' => 'required|exists:countries,id']);
         $country = Country::find($request->country_id);
 
-        // Cek apakah ada cache berita yang berumur kurang dari 1 jam untuk menghemat kuota API gratis[cite: 1]
         $cachedNews = NewsCache::where('country_id', $country->id)
                                 ->where('created_at', '>=', Carbon::now()->subHour())
                                 ->get();
@@ -131,28 +131,24 @@ class ApiController extends Controller
             return response()->json(['status' => 'success', 'source' => 'cache', 'data' => $cachedNews]);
         }
 
-        // Jika cache kedaluwarsa, tembak GNews API[cite: 1]
-        $articles = $this->apiService->getNews($country->name);
+        $articles = $this->apiService->getNews($country->name) ?? [];
 
-        // Hapus cache berita lama agar database tidak penuh
         NewsCache::where('country_id', $country->id)->delete();
 
         $savedNews = [];
         foreach ($articles as $article) {
-            // Jalankan Fitur AI: Lexicon Sentiment Analysis pada konten berita[cite: 1]
             $fullText = ($article['title'] ?? '') . ' ' . ($article['description'] ?? '');
             $analysis = $this->riskService->analyzeSentiment($fullText);
 
-            // Simpan ke database
             $news = NewsCache::create([
                 'country_id' => $country->id,
                 'title' => substr($article['title'] ?? 'No Title', 0, 255),
                 'source' => $article['source']['name'] ?? 'Unknown',
                 'url' => $article['url'] ?? '#',
-                'positive_count' => $analysis['positive_percent'], 
-                'negative_count' => $analysis['negative_percent'],
-                'sentiment' => $analysis['sentiment'], // PENTING: Pastikan bersih seperti ini
-                'published_at' => Carbon::parse($article['publishedAt'] ?? now()),
+                'positive_count' => $analysis['positive_percent'] ?? 0, 
+                'negative_count' => $analysis['negative_percent'] ?? 0,
+                'sentiment' => $analysis['sentiment'] ?? 'Neutral',
+                'published_at' => isset($article['publishedAt']) ? Carbon::parse($article['publishedAt']) : Carbon::now(),
             ]);
 
             $savedNews[] = $news;
@@ -166,12 +162,10 @@ class ApiController extends Controller
     }
 
     /**
-     * 5. GET /api/currency[cite: 1]
-     * Menyediakan data nilai tukar real-time untuk Currency Impact Dashboard[cite: 1].
+     * 5. GET /api/currency
      */
     public function getCurrencyData(Request $request)
     {
-        // Mengambil rate mata uang global dengan base USD[cite: 1]
         $rates = $this->apiService->getExchangeRate('USD');
 
         if (!$rates) {
@@ -182,6 +176,27 @@ class ApiController extends Controller
             'status' => 'success',
             'base' => 'USD',
             'rates' => $rates
+        ]);
+    }
+
+    /**
+     * 6. GET /api/ports
+     */
+    public function getPorts(Request $request)
+    {
+        $search = $request->query('search');
+
+        if ($search) {
+            $ports = Port::where('name', 'LIKE', "%{$search}%")
+                         ->with('country')
+                         ->get();
+        } else {
+            $ports = Port::with('country')->get();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $ports
         ]);
     }
 }

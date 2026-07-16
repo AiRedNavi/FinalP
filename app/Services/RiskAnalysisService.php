@@ -15,7 +15,7 @@ class RiskAnalysisService
      */
     public function analyzeSentiment(string $text): array
     {
-        // Ambil semua kamus kata dari database dan ubah ke bentuk array lowercase[cite: 1, 2]
+        // Ambil semua kamus kata dari database dan ubah ke bentuk array lowercase
         $positiveWords = PositiveWord::pluck('word')->map(fn($w) => strtolower($w))->toArray();
         $negativeWords = NegativeWord::pluck('word')->map(fn($w) => strtolower($w))->toArray();
 
@@ -52,11 +52,11 @@ class RiskAnalysisService
         }
 
         // Tentukan label sentimen dominan
-        $sentiment = 'Neutral';[cite: 1]
+        $sentiment = 'Neutral';
         if ($positiveScore > $negativeScore) {
-            $sentiment = 'Positive';[cite: 1]
+            $sentiment = 'Positive';
         } elseif ($negativeScore > $positiveScore) {
-            $sentiment = 'Negative';[cite: 1]
+            $sentiment = 'Negative';
         }
 
         return [
@@ -74,7 +74,7 @@ class RiskAnalysisService
     public function calculateCountryRisk(int $countryId, array $weatherData, float $inflationRate, string $dominantSentiment): RiskScore
     {
         // A. Konversi Data Cuaca ke Skala Risiko (0 - 100)
-        // Jika badai berisiko tinggi atau curah hujan sangat ekstrem, skor maksimal[cite: 1]
+        // Jika badai berisiko tinggi atau curah hujan sangat ekstrem, skor maksimal
         $weatherRisk = 20.00; 
         if (($weatherData['storm_risk'] ?? 'Low') === 'High' || ($weatherData['precipitation'] ?? 0) > 50) {
             $weatherRisk = 90.00;
@@ -82,32 +82,32 @@ class RiskAnalysisService
             $weatherRisk = 60.00;
         }
 
-        // B. Konversi Data Inflasi ke Skala Risiko (0 - 100)[cite: 1]
-        // Inflasi tinggi di atas target normal meningkatkan biaya produksi dan risiko supply chain[cite: 1]
+        // B. Konversi Data Inflasi ke Skala Risiko (0 - 100)
+        // Inflasi tinggi di atas target normal meningkatkan biaya produksi dan risiko supply chain
         $inflationRisk = 20.00;
         if ($inflationRate > 10.00) {
-            $inflationRisk = 95.00; // Krisis inflasi parah
+            $inflationRisk = 95.00;
         } elseif ($inflationRate > 5.00) {
-            $inflationRisk = 60.00; // Inflasi sedang mengkhawatirkan
+            $inflationRisk = 60.00;
         }
 
-        // C. Konversi Sentimen Berita Geopolitik/Logistik ke Skala Risiko (0 - 100)[cite: 1]
-        $sentimentRisk = 50.00; // Default Neutral[cite: 1]
+        // C. Konversi Sentimen Berita Geopolitik/Logistik ke Skala Risiko (0 - 100)
+        $sentimentRisk = 50.00; // Default Neutral
         if ($dominantSentiment === 'Negative') {
-            $sentimentRisk = 90.00; // Berita buruk/konflik meningkat[cite: 1]
+            $sentimentRisk = 90.00;
         } elseif ($dominantSentiment === 'Positive') {
-            $sentimentRisk = 15.00; // Kondisi logistik aman dan stabil[cite: 1]
+            $sentimentRisk = 15.00;
         }
 
-        // D. Konversi Risiko Nilai Tukar (Exchange Rate Risk)[cite: 1]
+        // D. Konversi Risiko Nilai Tukar (Exchange Rate Risk)
         // Untuk prototipe awal, kita beri nilai acak/stabil terukur atau dinamis (0 - 100)
         $exchangeRateRisk = ($inflationRate > 5.00) ? 70.00 : 30.00;
 
-        // E. Perhitungan Menggunakan Rumus Weighted Risk Model[cite: 1]
-        // Bobot: Cuaca (30%), Inflasi (20%), Berita/Politik (40%), Mata Uang (10%)[cite: 1]
-        $totalRisk = ($weatherRisk * 0.30) + ($inflationRisk * 0.20) + ($sentimentRisk * 0.40) + ($exchangeRateRisk * 0.10);[cite: 1]
+        // E. Perhitungan Menggunakan Rumus Weighted Risk Model
+        // Bobot: Cuaca (30%), Inflasi (20%), Berita/Politik (40%), Mata Uang (10%)
+        $totalRisk = ($weatherRisk * 0.30) + ($inflationRisk * 0.20) + ($sentimentRisk * 0.40) + ($exchangeRateRisk * 0.10);
 
-        // Simpan hasil kalkulasi analitik ke database riwayat tren risiko[cite: 1, 2]
+        // Simpan hasil kalkulasi analitik ke database riwayat tren risiko
         return RiskScore::create([
             'country_id' => $countryId,
             'weather_risk' => $weatherRisk,

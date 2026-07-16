@@ -6,8 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class NewsCache extends Model
 {
-    protected $fillable = [
-        'country_id', 'title', 'source', 'url', 
-        'positive_count', 'negative_count', 'sentiment', 'published_at'
-    ]; // Sesuai kolom database[cite: 2]
+    // Mengunci nama tabel agar Laravel tidak otomatis mencari 'news_caches'
+    protected $table = 'news_cache'; 
+
+    // Properti lainnya (fillable, dll) tetap biarkan saja
+    protected $fillable = ['country_id', 'title', 'source', 'url', 'positive_count', 'negative_count', 'sentiment'];
 }

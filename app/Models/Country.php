@@ -12,7 +12,7 @@ class Country extends Model
     public function ports()
     {
         return $this->hasMany(Port::class);
-    }
+    }   
 
     // Relasi: Satu negara punya banyak riwayat skor risiko
     public function riskScores()
